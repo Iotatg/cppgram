@@ -1,0 +1,4 @@
+build/
+.gittmp/
+*.o
+compile_commands.json
