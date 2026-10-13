@@ -383,8 +383,15 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "session parse failed: %s\n", e.what());
         return 1;
     }
+    if (std::getenv("MITM")) { sess.ip = "127.0.0.1"; sess.port = 8443; }
     Client client(sess, ClientConfig{});
     std::string err;
+    {
+        auto ak = sess.auth_key;
+        char b[32];
+        for (int i = 0; i < 8; i++) std::snprintf(b + i * 2, 3, "%02x", (unsigned char)ak[12 + i]);
+        std::printf("KEYID %s api=%d\n", b, sess.api_id);
+    }
     std::printf("session: dc=%d ip=%s user=%lld key=%zuB\n", sess.dc_id, sess.ip.c_str(),
                 static_cast<long long>(sess.user_id), sess.auth_key.size());
     if (!client.connect(&err)) {
@@ -1304,7 +1311,40 @@ int main(int argc, char** argv) {
     if (cmd == "effects") {
         std::string e2; print_val("effects", client.get_available_effects(&e2), e2);
     }
+    if (cmd == "fc2" && argc >= 5) {
+        std::string e0;
+        Val c0 = client.invoke("help.getConfig", "{\"_ctor\":\"help.getConfig\"}", &e0);
+        (void)c0;
+        std::printf("pre getConfig err=%zu\n", e0.size()); std::fflush(stdout);
+        long long cid = std::atoll(argv[3]);
+        long long cah = argc >= 5 ? std::atoll(argv[4]) : 0;
+        auto le64 = [](long long v) {
+            unsigned long long u = (unsigned long long)v;
+            return std::string((const char*)&u, 8);
+        };
+        std::string bare;
+        bare.push_back(0x09); bare.push_back(0x6a); bare.push_back(0x73); bare.push_back(0x08);
+        bare += le64(cid); bare += le64(cah);
+        std::string e1;
+        std::string r1 = client.call_rpc(bare, &e1, false);
+        std::printf("BARE_FC rc=%zu err='%s' out_head=%s\n", r1.size(), e1.c_str(),
+                    r1.size() ? r1.substr(0, 160) : std::string());
+        std::fflush(stdout);
+        char aj[512];
+        std::snprintf(aj, sizeof(aj),
+                      "{\"_ctor\":\"channels.getFullChannel\",\"channel\":{\"_ctor\":\"inputChannel\",\"channel_id\":%lld,\"access_hash\":%lld}}",
+                      cid, cah);
+        std::string e2;
+        Val r2 = client.invoke("channels.getFullChannel", aj, &e2);
+        print_val("WRAPPED_FC", r2, e2);
+    }
     if (cmd == "invoke" && argc >= 5) {
+        if (std::getenv("PRE_GETCONFIG")) {
+            std::string e0;
+            Val c0 = client.api("help.getConfig", Val::obj("help.getConfig"), &e0);
+            (void)c0;
+            std::fprintf(stderr, "pre getConfig err=%zu\n", e0.size());
+        }
         std::string e2; print_val("invoke", client.invoke(argv[3], argv[4], &e2), e2);
     }
     if (cmd == "recovergaps" && argc >= 5) {
